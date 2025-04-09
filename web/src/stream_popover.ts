@@ -1,17 +1,22 @@
+// 🔹 Módulos externos
 import $ from "jquery";
 import assert from "minimalistic-assert";
 import type * as tippy from "tippy.js";
 import {z} from "zod";
 
+// 🔹 Templates .hbs
 import render_inline_decorated_stream_name from "../templates/inline_decorated_stream_name.hbs";
 import render_inline_stream_or_topic_reference from "../templates/inline_stream_or_topic_reference.hbs";
 import render_topic_already_exists_warning_banner from "../templates/modal_banner/topic_already_exists_warning_banner.hbs";
 import render_move_topic_to_stream from "../templates/move_topic_to_stream.hbs";
 import render_left_sidebar_stream_actions_popover from "../templates/popovers/left_sidebar/left_sidebar_stream_actions_popover.hbs";
 
+
+// 🔹 Módulos internos
 import * as blueslip from "./blueslip.ts";
 import type {Typeahead} from "./bootstrap_typeahead.ts";
 import * as browser_history from "./browser_history.ts";
+import * as channel from "./channel.ts";
 import * as clipboard_handler from "./clipboard_handler.ts";
 import * as compose_banner from "./compose_banner.ts";
 import * as composebox_typeahead from "./composebox_typeahead.ts";
@@ -41,7 +46,12 @@ import * as ui_util from "./ui_util.ts";
 import * as unread from "./unread.ts";
 import * as unread_ops from "./unread_ops.ts";
 import {user_settings} from "./user_settings.ts";
-import * as util from "./util.ts";
+import * as user_topics from "./user_topics.ts";
+
+
+
+
+
 
 // In this module, we manage stream popovers
 // that pop up from the left sidebar.
@@ -109,14 +119,28 @@ function build_stream_popover(opts: {elt: HTMLElement; stream_id: number}): void
     const stream_unread = unread.unread_count_info_for_stream(stream_id);
     const stream_unread_count = stream_unread.unmuted_count + stream_unread.muted_count;
     const has_unread_messages = stream_unread_count > 0;
+    
+    const topic_names = stream_topic_history.get_recent_topic_names(stream_id);
+
+    const followed_topic_count = topic_names.filter((topic_name) =>
+        user_topics.is_topic_followed(stream_id, topic_name),
+    ).length;
+
+    const topic_count = topic_names.length;
+
     const content = render_left_sidebar_stream_actions_popover({
         stream: {
             ...sub_store.get(stream_id),
             url: browser_history.get_full_url(stream_hash),
+            get_subscriber_count: stream_data.get_subscriber_count(stream_id),
         },
+        topic_count,
+        followed_topic_count,
         has_unread_messages,
         show_go_to_channel_feed,
     });
+
+    
 
     popover_menus.toggle_popover_menu(elt, {
         // Add a delay to separate `hideOnClick` and `onShow` so that
@@ -214,6 +238,27 @@ function build_stream_popover(opts: {elt: HTMLElement; stream_id: number}): void
             $popper.on("click", ".copy_stream_link", (e) => {
                 assert(e.currentTarget instanceof HTMLElement);
                 clipboard_handler.popover_copy_link_to_clipboard(instance, $(e.currentTarget));
+            });
+
+            channel.get({
+                url: `/json/streams/${stream_id}/topics-info`,
+                success(data: unknown, _textStatus: JQuery.Ajax.SuccessTextStatus, _jqXHR: JQuery.jqXHR) {
+                    const { total_topics, followed_count } = data as {
+                        total_topics: number;
+                        followed_count: number;
+                    };
+            
+                    const $info = $(".topic-info-content");
+                    if ($info.length > 0) {
+                        $info.text(`${total_topics} topics (${followed_count} followed)`);
+                    }
+                },
+                error(_xhr) {
+                    const $info = $(".topic-info-content");
+                    if ($info.length > 0) {
+                        $info.text("Topic info unavailable");
+                    }
+                },
             });
         },
         onHidden(instance) {

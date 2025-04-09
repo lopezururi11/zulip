@@ -1203,3 +1203,45 @@ def get_stream_email_address(
     stream_email = encode_email_address(stream.name, email_token, show_sender=True)
 
     return json_success(request, data={"email": stream_email})
+
+@typed_endpoint
+def get_topics_info_backend(
+    request: HttpRequest,
+    user_profile: UserProfile,
+    *,
+    stream_id: PathOnly[NonNegativeInt],
+) -> HttpResponse:
+    """
+    Endpoint que retorna el número total de topics de un stream y la cantidad de topics
+    que se consideran "followed". Se considera un topic como followed si, para el usuario
+    y el stream dados, existe un registro en UserTopic con visibility_policy =
+    UserTopic.VisibilityPolicy.FOLLOWED.
+    """
+    # Obtenemos el stream y la suscripción (aunque 'sub' no se use en este endpoint)
+    (stream, sub) = access_stream_by_id(user_profile, stream_id)
+    
+    # Obtenemos la lista de topics para el stream utilizando la función get_topic_history_for_stream.
+    # Esta función devuelve una lista de diccionarios, donde cada uno contiene al menos la clave "name".
+    topics = get_topic_history_for_stream(
+        user_profile=user_profile,
+        recipient_id=assert_is_not_none(stream.recipient_id),
+        public_history=stream.is_history_public_to_subscribers(),
+        allow_empty_topic_name=False,
+    )
+    total_topics = len(topics)
+    
+    # Filtramos en UserTopic aquellos registros para este usuario y stream con el estado FOLLOWED.
+    followed_topics = set(
+        UserTopic.objects.filter(
+            user_profile=user_profile,
+            stream_id=stream.id,
+            visibility_policy=UserTopic.VisibilityPolicy.FOLLOWED,
+        ).values_list("topic_name", flat=True)
+    )
+    
+    followed_count = len(followed_topics)
+    
+    return json_success(request, data={
+        "total_topics": total_topics,
+        "followed_count": followed_count
+    })
